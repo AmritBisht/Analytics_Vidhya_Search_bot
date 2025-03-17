@@ -1,0 +1,33 @@
+.env
+## Ignore Python virtual environments
+myenv/
+venv/
+env/
+
+# Ignore large binary files
+*.dll
+*.lib
+*.so
+*.exe
+
+# Ignore compiled Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore dependency cache
+.pycache/
+.tox/
+.coverage
+.htmlcov/
+
+# Ignore IDE-specific files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Ignore logs and temporary files
+*.log
+*.tmp
