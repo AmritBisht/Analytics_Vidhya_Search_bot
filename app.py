@@ -2,28 +2,33 @@ import streamlit as st
 import pandas as pd
 import os
 from dotenv import load_dotenv
-import google.generativeai as genai
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
-import tempfile
 
 # Load environment variables
 load_dotenv()
 
+LANGSMITH_TRACING = os.getenv("LANGSMITH_TRACING")
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
+LANGSMITH_ENDPOINT = os.getenv("LANGSMITH_ENDPOINT") 
+LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT")
 class CourseSearchSystem:
     def __init__(self):
         """
         Initialize the course search system with Google's Generative AI
         """
-        genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
-        self.generation_config = {
-            'temperature': 0.1,  # Lower temperature for more consistent outputs
-            'top_p': 0.8,       # Reasonable top_p value for focused sampling
-            'top_k': 40,        # Standard top_k value
-            'max_output_tokens': 2048,  # Ensure sufficient length for detailed analysis
-        }
-        self.generation_model = genai.GenerativeModel('gemini-pro',
-                                                    generation_config=self.generation_config)
+        # Initialize the generative model for response generation
+        self.generation_model = ChatGoogleGenerativeAI(
+            model="gemini-1.5-pro", 
+            convert_system_message_to_human=True, # Use the Gemini Pro model
+            google_api_key=os.getenv('GOOGLE_API_KEY'),
+            temperature=0.1,     # Lower temperature for more consistent outputs
+            top_p=0.8,           # Reasonable top_p value for focused sampling
+            top_k=40,            # Standard top_k value
+            max_output_tokens=2048  # Ensure sufficient length for detailed analysis
+        )
+        
+        # Initialize the embedding model for RAG
         self.embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
         self.vector_store = None
         self.course_data = []
@@ -47,21 +52,26 @@ class CourseSearchSystem:
         """
         Create vector store from course data
         """
-        texts = []
-        for _, row in df.iterrows():
-            doc = self.process_course(row)
-            texts.append(doc)
-            self.course_data.append({
-                'title': row['Title'],
-                'brief': row['Brief'],
-                'level': row['Level'],
-                'duration': row['Duration'],
-                'url': row['Link'],
-                'curriculum': row['Curriculum'],
-                'target_audience': row['What should enroll & takeaway']
-            })
-        
-        self.vector_store = FAISS.from_texts(texts, self.embeddings)
+        try:
+            texts = []
+            for _, row in df.iterrows():
+                doc = self.process_course(row)
+                texts.append(doc)
+                self.course_data.append({
+                    'title': row['Title'],
+                    'brief': row['Brief'],
+                    'level': row['Level'],
+                    'duration': row['Duration'],
+                    'url': row['Link'],
+                    'curriculum': row['Curriculum'],
+                    'target_audience': row['What should enroll & takeaway']
+                })
+            
+            # Create the vector store using the embedding model
+            self.vector_store = FAISS.from_texts(texts, self.embeddings)
+        except Exception as e:
+            st.error(f"Error creating vector store: {str(e)}")
+            raise
 
     def search_courses(self, query, k=3):
         """
@@ -71,6 +81,7 @@ class CourseSearchSystem:
             if not self.vector_store:
                 return "Error: Search index not initialized.", []
 
+            # Perform similarity search using the vector store
             similar_docs = self.vector_store.similarity_search(query, k=k)
             
             relevant_courses = []
@@ -89,7 +100,7 @@ class CourseSearchSystem:
             if not relevant_courses:
                 return "No matching courses found for your query.", []
             
-            # Enhanced structured prompt for more consistent results
+            # Generate analysis using the generative model
             context = f"""
             Act as an experienced course advisor analyzing courses for a student interested in: "{query}"
 
@@ -107,16 +118,20 @@ class CourseSearchSystem:
 
             Be specific in your analysis, mentioning course titles and concrete features.
             Focus on how each course addresses the student's learning objectives.
-
             """
             
-            try:
-                response = self.generation_model.generate_content(context)
-                return response.text, relevant_courses
-            except Exception as e:
-                return f"Error generating course analysis: {str(e)}", relevant_courses
-                
+            # Use .invoke() to generate a response
+            response = self.generation_model.invoke(context)
+
+            # Extract the content from the response
+            if hasattr(response, 'content'):
+                parsed_response = response.content
+            else:
+                parsed_response = str(response)  # Fallback in case of unexpected structure
+
+            return parsed_response, relevant_courses
         except Exception as e:
+            st.error(f"Error during course search: {str(e)}")
             return f"Error during course search: {str(e)}", []
 
 def main():
@@ -161,7 +176,7 @@ def main():
                 
                 if courses:
                     st.write("### 📊 Course Analysis")
-                    st.write(response)
+                    st.markdown(response)  # Display the parsed response
                     
                     st.write("### 📚 Recommended Courses")
                     for course in courses:
